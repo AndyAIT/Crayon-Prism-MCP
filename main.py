@@ -23,7 +23,8 @@ def authenticate(config):
     data = {
         "grant_type": "client_credentials",
         "client_id": client_id,
-        "client_secret": client_secret
+        "client_secret": client_secret,
+	"scope": "rhipeapi"
     }
     try:
         response = httpx.post(url, headers=headers, data=data)
