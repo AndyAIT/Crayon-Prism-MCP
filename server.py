@@ -32,6 +32,14 @@ def search_customers(search_text: str) -> list[dict]:
         for customer in customers
     ]
 
+@mcp.tool()
+def list_microsoft_csp_subscriptions(customer_id: str) -> list[dict]:
+    """List Microsoft CSP subscriptions for a given customer."""
+    client = PrismClient()
+    subscriptions = client.list_microsoft_csp_subscriptions(customer_id)
+
+    return subscriptions
+
 
 if __name__ == "__main__":
     mcp.run(transport="stdio")

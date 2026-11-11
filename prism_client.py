@@ -95,3 +95,73 @@ class PrismClient:
             matching_customers = all_customers
 
         return matching_customers
+
+    def list_microsoft_csp_subscriptions(self, customer_id: str):
+        url = f"{self.config['api_url']}/api/v2/microsoftcsp/tenants"
+        headers = {
+            "Authorization": f"Bearer {self.access_token}",
+            "Accept": "application/json"
+        }
+        all_subscriptions = []
+        page = 1
+        page_size = 50
+        total_records = None
+
+        while True:
+            params = {
+                "endCustomerId": customer_id,
+                "page": page,
+                "pageSize": page_size
+            }
+
+            response = httpx.get(
+                url,
+                headers=headers,
+                params=params
+            )
+
+            response.raise_for_status()
+            result = response.json()
+
+            tenants = result.get("Items", [])
+            total_records = result.get("TotalRecords")
+
+            if not isinstance(tenants, list):
+                raise ValueError("Unexpected tenant response format")
+
+            for tenant in tenants:
+                tenant_id = tenant.get("TenantId")
+                tenant_domain = tenant.get("TenantDomain")
+                subscription_url = f"{self.config['api_url']}/api/v2/microsoftcsp/tenants/{tenant_id}/subscriptions"
+                subscription_params = {
+                    "status": "Active"
+                }
+                subscription_response = httpx.get(
+                    subscription_url,
+                    headers=headers,
+                    params=subscription_params
+                )
+                subscription_response.raise_for_status()
+                subscription_result = subscription_response.json()
+                subscriptions = subscription_result
+                for subscription in subscriptions:
+                    all_subscriptions.append({
+                        "CustomerId": customer_id,
+                        "TenantId": tenant_id,
+                        "TenantDomain": tenant_domain,
+                        "SubscriptionId": subscription.get("SubscriptionId"),
+                        "SubscriptionFriendlyName": subscription.get("SubscriptionFriendlyName")
+                    })
+
+            if not tenants:
+                break
+
+            if total_records is not None and len(all_subscriptions) >= total_records:
+                break
+
+            if len(tenants) < page_size:
+                break
+
+            page += 1
+
+        return all_subscriptions
