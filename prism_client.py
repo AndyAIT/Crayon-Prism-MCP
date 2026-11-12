@@ -143,15 +143,37 @@ class PrismClient:
                 )
                 subscription_response.raise_for_status()
                 subscription_result = subscription_response.json()
+ 
+                if not isinstance(subscription_result, list):
+                    raise ValueError("Unexpected subscription response format")
+
                 subscriptions = subscription_result
+                
                 for subscription in subscriptions:
-                    all_subscriptions.append({
-                        "CustomerId": customer_id,
-                        "TenantId": tenant_id,
-                        "TenantDomain": tenant_domain,
-                        "SubscriptionId": subscription.get("SubscriptionId"),
-                        "SubscriptionFriendlyName": subscription.get("SubscriptionFriendlyName")
-                    })
+                    subscription_id = subscription.get("SubscriptionId")
+                    try:
+                        detailed_subscription = self.get_subscription_details(subscription_id)
+                        all_subscriptions.append({
+                            "CustomerId": customer_id,
+                            "TenantId": tenant_id,
+                            "TenantDomain": tenant_domain,
+                            "SubscriptionId": subscription_id,
+                            "SubscriptionFriendlyName": subscription.get("SubscriptionFriendlyName"),
+                            "ProductName": detailed_subscription.get("ProductName"),
+                            "ProductSku": detailed_subscription.get("ProductSku"),
+                            "Quantity": detailed_subscription.get("Quantity"),
+                            "Status": detailed_subscription.get("Status"),
+                            "TermDurationNumber": detailed_subscription.get("TermDurationNumber"),
+                            "TermDurationUnit": detailed_subscription.get("TermDurationUnit"),
+                            "BillingCycle": detailed_subscription.get("BillingCycle"),
+                            "BillingCycleDuration": detailed_subscription.get("BillingCycleDuration"),
+                            "NextRenewalDate": detailed_subscription.get("NextRenewalDate"),
+                            "CommitmentEndDate": detailed_subscription.get("CommitmentEndDate"),
+                            "AutoRenewEnabled": detailed_subscription.get("AutoRenewEnabled"),
+                            "ScheduledRenewal": detailed_subscription.get("ScheduledRenewal")
+                        })
+                    except Exception as e:
+                        print(f"Failed to fetch details for subscription {subscription_id}: {e}")
 
             if not tenants:
                 break
@@ -165,3 +187,17 @@ class PrismClient:
             page += 1
 
         return all_subscriptions
+
+    def get_subscription_details(self, subscription_id: str):
+        url = f"{self.config['api_url']}/api/v2/microsoftcsp/subscriptions/{subscription_id}"
+        headers = {
+            "Authorization": f"Bearer {self.access_token}",
+            "Accept": "application/json"
+        }
+        response = httpx.get(
+            url,
+            headers=headers,
+            timeout=30
+        )
+        response.raise_for_status()
+        return response.json()
