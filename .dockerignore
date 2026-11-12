@@ -1,0 +1,15 @@
+.git
+.env
+.env.*
+!.env.example
+
+.venv
+.aider*
+__pycache__/
+*.pyc
+
+test_*.py
+my-customers.json
+prism-swagger-v2.json
+
+.DS_Store

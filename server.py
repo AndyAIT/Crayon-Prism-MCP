@@ -1,7 +1,16 @@
 from mcp.server.fastmcp import FastMCP
 from prism_client import PrismClient
+import os
 
-mcp = FastMCP("Crayon PRISM")
+MCP_TRANSPORT = os.getenv("MCP_TRANSPORT", "stdio")
+
+mcp = FastMCP(
+    "Crayon PRISM",
+    host="0.0.0.0",
+    port=8785,
+    streamable_http_path="/mcp"
+)
+
 
 @mcp.tool()
 def list_customers() -> list[dict]:
@@ -16,7 +25,6 @@ def list_customers() -> list[dict]:
         }
         for customer in customers
     ]
-
 
 @mcp.tool()
 def search_customers(search_text: str) -> list[dict]:
@@ -40,6 +48,10 @@ def list_microsoft_csp_subscriptions(customer_id: str) -> list[dict]:
 
     return subscriptions
 
-
 if __name__ == "__main__":
-    mcp.run(transport="stdio")
+    if MCP_TRANSPORT == "stdio":
+        mcp.run(transport="stdio")
+    elif MCP_TRANSPORT == "streamable-http":
+        mcp.run(transport="streamable-http")
+    else:
+        raise ValueError("Invalid MCP_TRANSPORT value")
