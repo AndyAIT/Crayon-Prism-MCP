@@ -21,3 +21,14 @@ build/
 coverage.xml
 .coverage
 htmlcov/
+
+# Local PRISM investigation files
+test_tenants.py
+my-customers.json
+prism-swagger-v2.json
+*-swagger*.json
+
+# Credentials
+.env
+.env.*
+!.env.example
