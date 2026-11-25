@@ -1,4 +1,7 @@
 from mcp.server.fastmcp import FastMCP
+import httpx
+
+import subscription_changes as changes
 from prism_client import PrismClient
 import hmac
 import os
@@ -84,6 +87,92 @@ def list_microsoft_csp_subscriptions(customer_id: str) -> list[dict]:
     subscriptions = client.list_microsoft_csp_subscriptions(customer_id)
 
     return subscriptions
+
+
+def _apply_change(subscription_id, planner, quantity, dry_run, send, hint=None):
+    """Plan from live read-only data; only send the write when not a dry run and writes are enabled."""
+    client = PrismClient()
+    plan = planner(client.get_subscription_details(subscription_id), quantity)
+    if not plan["allowed"]:
+        return {"status": "blocked", **plan}
+    if dry_run:
+        return {
+            "status": "dry_run",
+            "message": "No change made. Call again with dry_run=false to apply.",
+            **plan,
+        }
+    if not changes.writes_enabled():
+        return {
+            "status": "writes_disabled",
+            "message": "This server is read-only. Set MCP_ALLOW_WRITES=true to enable changes.",
+            **plan,
+        }
+    try:
+        reference = send(client)
+    except httpx.HTTPStatusError as e:
+        return changes.rejection(e, hint)
+    return {"status": "submitted", "reference": reference, **plan}
+
+
+@mcp.tool()
+def get_subscription_change_options(subscription_id: str) -> dict:
+    """Read-only. Show the current quantity, limits, lock state, whether seats can still be
+    reduced now (cancellation window), and any quantity already scheduled for renewal."""
+    client = PrismClient()
+    return changes.summarise(client.get_subscription_details(subscription_id))
+
+
+@mcp.tool()
+def increase_subscription_quantity(
+    subscription_id: str, new_quantity: int, dry_run: bool = True
+) -> dict:
+    """Increase seats on a Microsoft CSP subscription to new_quantity. Identify the subscription by
+    SubscriptionId; if a customer has several matching subscriptions, ask the user which one.
+    Defaults to a dry run that changes nothing."""
+    return _apply_change(
+        subscription_id,
+        changes.plan_increase,
+        new_quantity,
+        dry_run,
+        lambda c: c.change_subscription_quantity(subscription_id, new_quantity),
+    )
+
+
+@mcp.tool()
+def reduce_subscription_quantity(
+    subscription_id: str, new_quantity: int, dry_run: bool = True
+) -> dict:
+    """Reduce seats immediately. Only possible inside the cancellation window. If the result is
+    blocked or rejected, tell the user and offer schedule_subscription_quantity_at_renewal instead.
+    Defaults to a dry run that changes nothing."""
+    return _apply_change(
+        subscription_id,
+        changes.plan_reduce_now,
+        new_quantity,
+        dry_run,
+        lambda c: c.change_subscription_quantity(subscription_id, new_quantity),
+        hint="Use schedule_subscription_quantity_at_renewal to reduce at the next renewal.",
+    )
+
+
+@mcp.tool()
+def schedule_subscription_quantity_at_renewal(
+    subscription_id: str, target_quantity: int, dry_run: bool = True
+) -> dict:
+    """Set the seat count the subscription will renew with at the end of its current term. Keeps
+    the existing renewal product, term and billing cycle. Defaults to a dry run that changes nothing."""
+    return _apply_change(
+        subscription_id,
+        changes.plan_schedule,
+        target_quantity,
+        dry_run,
+        lambda c: c.set_scheduled_actions(
+            subscription_id,
+            changes.plan_schedule(
+                c.get_subscription_details(subscription_id), target_quantity
+            )["request"]["body"]["scheduledActions"],
+        ),
+    )
 
 if __name__ == "__main__":
     if MCP_TRANSPORT == "stdio":

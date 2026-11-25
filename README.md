@@ -124,11 +124,26 @@ During development, `test\_tenants.py` and downloaded Swagger JSON files were us
 
 The implementation uses the actual PRISM response property casing, such as `Items`, `TotalRecords`, `TenantId`, `SubscriptionId`, and `SubscriptionFriendlyName`.
 
+## Subscription quantity changes
+
+| Tool | Purpose |
+|---|---|
+| `get_subscription_change_options` | Read-only: quantity, min/max, lock state, whether seats can still be reduced now (cancellation window), quantity already scheduled for renewal |
+| `increase_subscription_quantity` | Raise seats now |
+| `reduce_subscription_quantity` | Reduce seats now; only possible inside the cancellation window, otherwise blocked with a pointer to the tool below |
+| `schedule_subscription_quantity_at_renewal` | Set the seat count for the next term, keeping the renewal product, term and billing cycle |
+
+Safety:
+
+* Every change tool takes a `SubscriptionId` and defaults to `dry_run=true`, which reads live data, validates the change and returns the exact request without sending it.
+* Real changes require `dry_run=false` **and** `MCP_ALLOW_WRITES=true` on the server. Without the flag the server stays read-only.
+* Offline tests: `uv run python -m unittest test_subscription_changes -v`.
+
 ## Current limitations and planned work
 
 * Streamable HTTP (`MCP_TRANSPORT=streamable-http`, port 8785, path `/mcp`) is protected by a single shared bearer token (`MCP_AUTH_TOKEN`), not per-user authorization.
 * Docker packaging exists (`Dockerfile`, `compose.yaml`); no distribution package yet.
-* Read-only customer and CSP subscription tools only; no write operations.
+* Customer and CSP subscription listing is read-only. Quantity-change tools exist but are gated; see "Subscription quantity changes".
 * Subscription output has no prices and no verified M365-only filter.
 * API access depends on the permissions of the configured PRISM application.
 * Additional production hardening may be needed, including token refresh/retry behaviour, structured logging, and automated tests with mocked API responses.

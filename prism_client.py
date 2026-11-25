@@ -1,4 +1,5 @@
 import os
+import sys
 from dotenv import load_dotenv
 import httpx
 
@@ -33,11 +34,9 @@ class PrismClient:
             response.raise_for_status()
             return response.json().get("access_token")
         except httpx.HTTPStatusError as e:
-            print(f"HTTP/API failure: {e}")
-            return None
+            raise RuntimeError(f"PRISM authentication failed: HTTP {e.response.status_code}") from e
         except httpx.RequestError as e:
-            print(f"Network/connection failure: {e}")
-            return None
+            raise RuntimeError(f"PRISM authentication failed: {type(e).__name__}") from e
 
     def search_customers(self, search_text=None):
         url = f"{self.config['api_url']}/api/v2/me/customers"
@@ -173,7 +172,7 @@ class PrismClient:
                             "ScheduledRenewal": detailed_subscription.get("ScheduledRenewal")
                         })
                     except Exception as e:
-                        print(f"Failed to fetch details for subscription {subscription_id}: {e}")
+                        print(f"Failed to fetch details for subscription {subscription_id}: {e}", file=sys.stderr)
 
             if not tenants:
                 break
@@ -201,3 +200,29 @@ class PrismClient:
         )
         response.raise_for_status()
         return response.json()
+
+    def _write_headers(self):
+        return {
+            "Authorization": f"Bearer {self.access_token}",
+            "Accept": "application/json",
+            "Content-Type": "application/json"
+        }
+
+    def change_subscription_quantity(self, subscription_id: str, new_quantity: int):
+        """Change the quantity immediately. PRISM answers 202 with a process reference."""
+        url = f"{self.config['api_url']}/api/v2/microsoftcsp/subscriptions/{subscription_id}/quantity/{new_quantity}"
+        response = httpx.post(url, headers=self._write_headers(), timeout=30)
+        response.raise_for_status()
+        return response.text
+
+    def set_scheduled_actions(self, subscription_id: str, scheduled_actions: list):
+        """Replace the instructions applied at the next renewal."""
+        url = f"{self.config['api_url']}/api/v2/microsoftcsp/subscriptions/{subscription_id}/scheduled-actions"
+        response = httpx.put(
+            url,
+            headers=self._write_headers(),
+            json={"scheduledActions": scheduled_actions},
+            timeout=30
+        )
+        response.raise_for_status()
+        return response.text

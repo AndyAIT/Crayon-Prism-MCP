@@ -11,6 +11,7 @@ services:
     environment:
       MCP_TRANSPORT: streamable-http
       MCP_AUTH_TOKEN: ${MCP_AUTH_TOKEN:?MCP_AUTH_TOKEN must be set}
+      MCP_ALLOW_WRITES: ${MCP_ALLOW_WRITES:-false}
       PRISM_TOKEN_URL: ${PRISM_TOKEN_URL}
       PRISM_API_BASE_URL: ${PRISM_API_BASE_URL}
       PRISM_CLIENT_ID: ${PRISM_CLIENT_ID}
