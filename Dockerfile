@@ -12,7 +12,7 @@ COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev --no-install-project
 
 # Copy application source
-COPY server.py prism_client.py ./
+COPY server.py prism_client.py subscription_changes.py ./
 
 # Configure Python environment
 ENV PATH="/app/.venv/bin:$PATH"
