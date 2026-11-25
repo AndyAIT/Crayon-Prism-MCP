@@ -1,165 +1,124 @@
 # Crayon PRISM MCP
 
-A small, read-only Python [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server for querying customers and Microsoft CSP subscriptions through the Crayon PRISM Portal API.
+A [Model Context Protocol](https://modelcontextprotocol.io/) server for the Crayon PRISM Portal API. It lets an AI client look up customers and Microsoft CSP subscriptions, and, with explicit opt-in, change subscription seat counts.
 
-**Current status:** The three tools below have been exercised against PRISM, including an MCP client/server test over **stdio**. This is an early development project, not a packaged production service.
+* **Seven tools:** four read-only, three gated writes. See [Docs/TOOLS.md](Docs/TOOLS.md).
+* **Transports:** stdio (local clients) and Streamable HTTP (containers, remote clients).
+* **Safe by default:** change tools only preview (`dry_run`) unless the server is explicitly started with `MCP_ALLOW_WRITES=true`.
 
-## Available tools
+> This is an unofficial community project, not affiliated with or endorsed by Crayon. It can change real subscriptions and billing when writes are enabled. Test against non-critical data first and review the behaviour described below.
 
-|Tool|Input|Result|
-|-|-|-|
-|`list\_customers`|None|Accessible active customers, including IDs and names|
-|`search\_customers`|`search\_text: str`|Case-insensitive customer-name matches|
-|`list\_microsoft\_csp\_subscriptions`|`customer\_id: str` (PRISM CustomerId UUID)|Active Microsoft CSP subscriptions across the customer's matching CSP tenants, including tenant and subscription IDs/names|
+## Tools
 
-The subscription tool is **not** a Microsoft 365-only product filter. It uses the Microsoft CSP subscription API, and returns tenant and subscription identifiers, product, quantity, status, billing, term and renewal details. All tools are read-only.
+| Tool | Type | Purpose |
+|---|---|---|
+| `list_customers` | Read | List accessible active customers |
+| `search_customers` | Read | Find customers by name |
+| `list_microsoft_csp_subscriptions` | Read | List a customer's active Microsoft CSP subscriptions |
+| `get_subscription_change_options` | Read | Show which quantity changes are possible now |
+| `increase_subscription_quantity` | Write | Raise seats now |
+| `reduce_subscription_quantity` | Write | Reduce seats now (cancellation window only) |
+| `schedule_subscription_quantity_at_renewal` | Write | Set the seat count for the next term |
+
+Full parameters, result statuses and examples: [Docs/TOOLS.md](Docs/TOOLS.md).
+
+## How changes are made safely
+
+1. Change tools default to `dry_run=true`: they read live data, validate, and return the exact request without sending it.
+2. A real change needs `dry_run=false` **and** `MCP_ALLOW_WRITES=true` on the server.
+3. PRISM replies `202 Accepted` before it processes a change, and reports failures only in its audit log. The server therefore re-reads the subscription and returns `completed` only once the new value is visible; otherwise it returns `pending` (unconfirmed). Never treat an accepted request as a finished change.
+4. Reductions outside the cancellation window are blocked up front, with the renewal-time schedule offered as the alternative.
 
 ## Requirements
 
-* Python 3.12 or later (the project was tested with Python 3.12)
-* [`uv`](https://docs.astral.sh/uv/)
-* Crayon PRISM API client ID and client secret authorised for the `rhipeapi` scope
-* Network access to the PRISM identity and API endpoints
-
-Aider and Ollama were used during development but **are not required** to run this repository. Docker is optional; see `Docs/DOCKER_INSTALL.md` for the Streamable HTTP deployment (`compose.yaml`), which requires `MCP_AUTH_TOKEN`.
-
-## Clone and install
-
-```bash
-git clone https://github.com/AndyAIT/Crayon-Prism-MCP.git
-cd Crayon-Prism-MCP
-uv sync
-```
-
-`uv sync` creates/updates the project virtual environment and installs dependencies from `pyproject.toml` and `uv.lock`.
+* Python 3.12 or later and [uv](https://docs.astral.sh/uv/), or Docker
+* A PRISM API client ID and secret authorised for the `rhipeapi` scope
 
 ## Configuration
 
-Copy the example environment file:
+Copy `.env.example` to `.env` (it is git-ignored) and fill it in:
 
-```bash
-cp .env.example .env
+| Variable | Required | Purpose |
+|---|---|---|
+| `PRISM_TOKEN_URL` | Yes | PRISM identity token endpoint |
+| `PRISM_API_BASE_URL` | Yes | PRISM API base URL |
+| `PRISM_CLIENT_ID` | Yes | API client ID |
+| `PRISM_CLIENT_SECRET` | Yes | API client secret |
+| `MCP_TRANSPORT` | No | `stdio` (default) or `streamable-http` |
+| `MCP_AUTH_TOKEN` | HTTP only | Shared bearer token; the server will not start in HTTP mode without it |
+| `MCP_ALLOW_WRITES` | No | `true`/`1`/`yes` lets change tools act. Default off |
+| `MCP_CONFIRM_TIMEOUT_SECONDS` | No | How long to wait for a change to appear (default 60) |
+| `MCP_CONFIRM_INTERVAL_SECONDS` | No | Poll interval (default 5, minimum 0.5) |
+
+Never commit `.env`, API responses, or customer data.
+
+## Run locally
+
+```sh
+uv sync
+uv run python server.py          # stdio
 ```
 
-Ensure `.env` contains these names and values (replace placeholders with your own credentials):
+An example stdio client entry:
 
-```dotenv
-PRISM\_TOKEN\_URL=https://identity.prismportal.online/connect/token
-PRISM\_API\_BASE\_URL=https://api.prismportal.online
-PRISM\_CLIENT\_ID=your-client-id
-PRISM\_CLIENT\_SECRET=your-client-secret
+```json
+{
+  "mcpServers": {
+    "prism": {
+      "command": "uv",
+      "args": ["--directory", "/path/to/Crayon-Prism-MCP", "run", "python", "server.py"]
+    }
+  }
+}
 ```
 
-Authentication uses OAuth2 client credentials with `grant\_type=client\_credentials` and scope `rhipeapi`. The token is then sent as a bearer token on API requests.
+## Run in Docker (HTTP)
 
-**Security:** Never commit `.env`, client secrets, or access tokens. `.env.example` should contain only non-secret examples. Confirm `.env` is ignored before committing:
-
-```bash
-git check-ignore .env
+```sh
+docker compose up -d --build prism-mcp
 ```
 
-## Test the command-line client
+The endpoint is `http://127.0.0.1:8785/mcp` and requires `Authorization: Bearer <MCP_AUTH_TOKEN>`. Full guide, curl tests and troubleshooting: [Docs/DOCKER_INSTALL.md](Docs/DOCKER_INSTALL.md). Put TLS in front of it (for example a tunnel or reverse proxy) before exposing it beyond localhost.
 
-List accessible active customers:
+## Tests
 
-```bash
-uv run python main.py
+```sh
+uv run python -m unittest test_subscription_changes -v
 ```
 
-Search customer names locally, case-insensitively, after retrieving paginated results:
-
-```bash
-uv run python main.py contoso
-```
-
-The customer list uses the PRISM customer endpoint and retrieves multiple pages as necessary.
-
-## Run the MCP server (stdio)
-
-```bash
-uv run python server.py
-```
-
-The server communicates via **stdin/stdout** and may appear idle when launched directly. This is expected: it waits for an MCP client. Do not type ordinary prompts into that process. Any application integrating it should launch the server as a subprocess with the repository as its working directory and the configured environment available.
-
-## End-to-end stdio test
-
-The repository includes `test\_mcp.py`, which starts `server.py` as a child process, initializes an MCP session, discovers tools and invokes a tool.
-
-```bash
-uv run python test\_mcp.py
-```
-
-The development test was last configured to invoke `list\_microsoft\_csp\_subscriptions` for an example customer. **Review the tool name and `customer\_id` in `test\_mcp.py` before running** and replace the customer ID with one accessible to your PRISM account. You can also adapt it to call `search\_customers` with `{"search\_text": "contoso"}` or `list\_customers` with `{}`.
-
-Successful protocol testing should show an initialized connection, the available tool names, and a successful tool result. A successful Python import or direct FastMCP method call alone does not establish that stdio works.
-
-For syntax-only checks:
-
-```bash
-uv run python -m py\_compile main.py prism\_client.py server.py test\_mcp.py
-```
+These are offline unit tests with fictional data. `test_mcp.py` is a stdio integration test that calls the live PRISM API and needs real credentials; its customer ID is a placeholder.
 
 ## Project files
 
-|File|Purpose|
-|-|-|
-|`prism\_client.py`|Environment configuration, OAuth authentication, customer retrieval/search/pagination and CSP tenant/subscription lookup|
-|`server.py`|FastMCP server (stdio or authenticated Streamable HTTP) and tool registrations|
-|`main.py`|Command-line customer listing/search test|
-|`test\_mcp.py`|MCP client integration test over stdio|
-|`pyproject.toml`|Python project and dependency declarations|
-|`uv.lock`|Resolved dependency versions|
-|`.env.example`|Template for runtime configuration|
-|`.gitignore`|Local/secret file exclusions|
-
-During development, `test\_tenants.py` and downloaded Swagger JSON files were used to investigate the API. They are **not required** to run the three MCP tools and may not be included in the repository.
-
-## PRISM API operations currently used
-
-* Token: `POST https://identity.prismportal.online/connect/token` (`application/x-www-form-urlencoded`)
-* Customers: `GET https://api.prismportal.online/api/v2/me/customers` (paginated)
-* CSP tenants: `GET https://api.prismportal.online/api/v2/microsoftcsp/tenants` (filter by `endCustomerId`, paginated)
-* Active CSP subscriptions: `GET https://api.prismportal.online/api/v2/microsoftcsp/tenants/{tenantId}/subscriptions?status=Active`
-
-The implementation uses the actual PRISM response property casing, such as `Items`, `TotalRecords`, `TenantId`, `SubscriptionId`, and `SubscriptionFriendlyName`.
-
-## Subscription quantity changes
-
-| Tool | Purpose |
+| File | Purpose |
 |---|---|
-| `get_subscription_change_options` | Read-only: quantity, min/max, lock state, whether seats can still be reduced now (cancellation window), quantity already scheduled for renewal |
-| `increase_subscription_quantity` | Raise seats now |
-| `reduce_subscription_quantity` | Reduce seats now; only possible inside the cancellation window, otherwise blocked with a pointer to the tool below |
-| `schedule_subscription_quantity_at_renewal` | Set the seat count for the next term, keeping the renewal product, term and billing cycle |
+| `server.py` | MCP server, tool definitions, bearer-token middleware |
+| `prism_client.py` | PRISM API client (authentication, customers, subscriptions, changes) |
+| `subscription_changes.py` | Pure validation and planning logic for quantity changes |
+| `main.py` | Small command-line customer list/search helper |
+| `test_subscription_changes.py` | Offline unit tests |
+| `test_mcp.py` | Live stdio integration test |
+| `Dockerfile`, `compose.yaml` | Container build and Compose service |
+| `Docs/TOOLS.md` | Tool reference |
+| `Docs/DOCKER_INSTALL.md` | Docker deployment guide |
+| `CHANGELOG.md` | Release notes |
+| `LICENSE` | MIT licence |
 
-Safety:
+The `Dockerfile` copies source files by name. If you add a module, add it to the `COPY` line or the image will fail at startup.
 
-* Every change tool takes a `SubscriptionId` and defaults to `dry_run=true`, which reads live data, validates the change and returns the exact request without sending it.
-* Real changes require `dry_run=false` **and** `MCP_ALLOW_WRITES=true` on the server. Without the flag the server stays read-only.
-* PRISM replies `202` before it has processed a change, so after sending, the tool re-reads the subscription until the new quantity shows. `completed` means PRISM now shows it; `pending` means it was accepted but never appeared within `MCP_CONFIRM_TIMEOUT_SECONDS` (default 60, polled every `MCP_CONFIRM_INTERVAL_SECONDS`, default 5). Failures are only visible in the PRISM audit log, so treat `pending` as unconfirmed.
-* Offline tests: `uv run python -m unittest test_subscription_changes -v`.
+## Known limitations
 
-## Current limitations and planned work
+* One shared bearer token, not per-user authorisation.
+* Access tokens are not cached; each tool call authenticates afresh.
+* Listing subscriptions fetches details one by one, so large customers are slow.
+* No tools yet for adding products, creating or cancelling subscriptions, or clearing a scheduled change.
+* PRISM exposes no process-status endpoint, so a failed change is detectable only as `pending` here and in the PRISM audit log.
+* The PRISM swagger file is not included in this repository.
 
-* Streamable HTTP (`MCP_TRANSPORT=streamable-http`, port 8785, path `/mcp`) is protected by a single shared bearer token (`MCP_AUTH_TOKEN`), not per-user authorization.
-* Docker packaging exists (`Dockerfile`, `compose.yaml`); no distribution package yet.
-* Customer and CSP subscription listing is read-only. Quantity-change tools exist but are gated; see "Subscription quantity changes".
-* Subscription output has no prices and no verified M365-only filter.
-* API access depends on the permissions of the configured PRISM application.
-* Additional production hardening may be needed, including token refresh/retry behaviour, structured logging, and automated tests with mocked API responses.
+## Contributing
 
-Planned work includes additional read-only PRISM operations, richer subscription metadata, Streamable HTTP transport with appropriate authentication, and Docker packaging.
+Issues and pull requests are welcome. Keep examples fictional, and never include real customer names, identifiers, tenant domains, credentials or raw API responses in code, tests, docs, issues or commits.
 
-## Troubleshooting
+## Licence
 
-* **Missing configuration:** Check that `.env` is in the project directory and that all four variable names above are populated.
-* **401/403:** Verify PRISM API credentials, scope and authorisation for the requested customer/tenant.
-* **404:** Check the API base URL and endpoint path; the identity host and API host are different.
-* **Unexpected response shape:** PRISM responses can use PascalCase keys. Inspect a sanitised response and compare with the implementation.
-* **MCP client connects but a tool fails:** First confirm `uv run python main.py` works, then inspect the tool's exception without exposing tokens or secrets.
-
-## Development notes
-
-The project was developed on an Apple Silicon Mac mini using `uv`, Aider and Ollama. These development tools are separate from the application runtime. Review all generated changes and test before committing or deploying.
-
+[MIT](LICENSE).
