@@ -1,0 +1,17 @@
+services:
+  prism-mcp:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: prism-mcp:local
+    container_name: prism-mcp
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8785:8785"
+    environment:
+      MCP_TRANSPORT: streamable-http
+      MCP_AUTH_TOKEN: ${MCP_AUTH_TOKEN:?MCP_AUTH_TOKEN must be set}
+      PRISM_TOKEN_URL: ${PRISM_TOKEN_URL}
+      PRISM_API_BASE_URL: ${PRISM_API_BASE_URL}
+      PRISM_CLIENT_ID: ${PRISM_CLIENT_ID}
+      PRISM_CLIENT_SECRET: ${PRISM_CLIENT_SECRET}

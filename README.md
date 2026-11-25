@@ -12,7 +12,7 @@ A small, read-only Python [Model Context Protocol (MCP)](https://modelcontextpro
 |`search\_customers`|`search\_text: str`|Case-insensitive customer-name matches|
 |`list\_microsoft\_csp\_subscriptions`|`customer\_id: str` (PRISM CustomerId UUID)|Active Microsoft CSP subscriptions across the customer's matching CSP tenants, including tenant and subscription IDs/names|
 
-The subscription tool is **not** a Microsoft 365-only product filter. It uses the Microsoft CSP subscription API, and currently returns basic subscription identifiers and friendly names, not seat counts, prices, or renewal dates. All tools are read-only.
+The subscription tool is **not** a Microsoft 365-only product filter. It uses the Microsoft CSP subscription API, and returns tenant and subscription identifiers, product, quantity, status, billing, term and renewal details. All tools are read-only.
 
 ## Requirements
 
@@ -21,7 +21,7 @@ The subscription tool is **not** a Microsoft 365-only product filter. It uses th
 * Crayon PRISM API client ID and client secret authorised for the `rhipeapi` scope
 * Network access to the PRISM identity and API endpoints
 
-Aider and Ollama were used during development but **are not required** to run this repository. Docker is not required for the current stdio version.
+Aider and Ollama were used during development but **are not required** to run this repository. Docker is optional; see `Docs/DOCKER_INSTALL.md` for the Streamable HTTP deployment (`compose.yaml`), which requires `MCP_AUTH_TOKEN`.
 
 ## Clone and install
 
@@ -105,7 +105,7 @@ uv run python -m py\_compile main.py prism\_client.py server.py test\_mcp.py
 |File|Purpose|
 |-|-|
 |`prism\_client.py`|Environment configuration, OAuth authentication, customer retrieval/search/pagination and CSP tenant/subscription lookup|
-|`server.py`|FastMCP stdio server and tool registrations|
+|`server.py`|FastMCP server (stdio or authenticated Streamable HTTP) and tool registrations|
 |`main.py`|Command-line customer listing/search test|
 |`test\_mcp.py`|MCP client integration test over stdio|
 |`pyproject.toml`|Python project and dependency declarations|
@@ -126,10 +126,10 @@ The implementation uses the actual PRISM response property casing, such as `Item
 
 ## Current limitations and planned work
 
-* Stdio transport only; no remote Streamable HTTP endpoint or endpoint authentication yet.
-* No Docker image or distribution package yet.
+* Streamable HTTP (`MCP_TRANSPORT=streamable-http`, port 8785, path `/mcp`) is protected by a single shared bearer token (`MCP_AUTH_TOKEN`), not per-user authorization.
+* Docker packaging exists (`Dockerfile`, `compose.yaml`); no distribution package yet.
 * Read-only customer and CSP subscription tools only; no write operations.
-* Subscription output is basic. It does not yet provide quantities, billing terms, prices or renewals, nor a verified M365-only filter.
+* Subscription output has no prices and no verified M365-only filter.
 * API access depends on the permissions of the configured PRISM application.
 * Additional production hardening may be needed, including token refresh/retry behaviour, structured logging, and automated tests with mocked API responses.
 

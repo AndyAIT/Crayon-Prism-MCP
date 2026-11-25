@@ -10,7 +10,7 @@ The server exposes three read-only MCP tools:
 - `search_customers(search_text)` searches customer names case-insensitively.
 - `list_microsoft_csp_subscriptions(customer_id)` retrieves active Microsoft CSP subscriptions associated with a PRISM customer.
 
-The subscription tool does **not** guarantee Microsoft 365-only results. It returns basic subscription and tenant information, not licence quantities or billing details.
+The subscription tool does **not** guarantee Microsoft 365-only results. It returns tenant and subscription identifiers, product, quantity, status, billing, term and renewal details.
 
 ## Prerequisites
 
@@ -40,13 +40,16 @@ PRISM_TOKEN_URL=https://identity.prismportal.online/connect/token
 PRISM_API_BASE_URL=https://api.prismportal.online
 PRISM_CLIENT_ID=REPLACE_WITH_CLIENT_ID
 PRISM_CLIENT_SECRET=REPLACE_WITH_CLIENT_SECRET
+MCP_AUTH_TOKEN=REPLACE_WITH_LONG_RANDOM_TOKEN
 ```
+
+`MCP_AUTH_TOKEN` is required for the HTTP transport: the server refuses to start without it, and every request must send `Authorization: Bearer <token>`. Generate one with `openssl rand -hex 32`.
 
 Keep `.env` out of Git and the image build context. Never place credentials directly in the Compose file, Dockerfile or public issue reports. Use a dedicated secrets solution where appropriate for production.
 
 ## 3. Create the Compose configuration
 
-Create `compose.yaml` in the repository root:
+The repository includes `compose.yaml` in the root. It reads the values from your `.env` and passes them to the container:
 
 ```yaml
 services:
@@ -61,6 +64,7 @@ services:
       - "127.0.0.1:8785:8785"
     environment:
       MCP_TRANSPORT: streamable-http
+      MCP_AUTH_TOKEN: ${MCP_AUTH_TOKEN:?MCP_AUTH_TOKEN must be set}
       PRISM_TOKEN_URL: ${PRISM_TOKEN_URL}
       PRISM_API_BASE_URL: ${PRISM_API_BASE_URL}
       PRISM_CLIENT_ID: ${PRISM_CLIENT_ID}
@@ -88,13 +92,14 @@ Do not publish the expanded output of `docker compose config`, which may reveal 
 
 ```sh
 curl -i http://127.0.0.1:8785/mcp
+curl -i -H "Authorization: Bearer $MCP_AUTH_TOKEN" http://127.0.0.1:8785/mcp
 ```
 
-A plain GET can return `406 Not Acceptable` because it lacks MCP protocol headers. That establishes HTTP reachability, **not** successful MCP tool execution.
+Without the token the server returns `401 Unauthorized`. With it, a plain GET can return `406 Not Acceptable` because it lacks MCP protocol headers. That establishes HTTP reachability, **not** successful MCP tool execution.
 
 ## 6. Test the MCP protocol using curl
 
-These examples use standard HTTP requests and JSON-RPC. Some MCP servers respond using Server-Sent Events (`event: message` followed by `data: ...`) rather than plain JSON. Preserve the session identifier from the initialization response.
+These examples use standard HTTP requests and JSON-RPC. **Add `-H "Authorization: Bearer $MCP_AUTH_TOKEN"` to every request below.** Some MCP servers respond using Server-Sent Events (`event: message` followed by `data: ...`) rather than plain JSON. Preserve the session identifier from the initialization response.
 
 ### Initialize
 
@@ -187,12 +192,14 @@ If using a source archive rather than Git, replace the source files before rebui
 - **Container exits:** Inspect `docker compose logs --tail=100 prism-mcp`.
 - **Connection refused:** Confirm the container is running, the port is available, and the host binding is appropriate.
 - **406 response:** Include `Accept: application/json, text/event-stream` for MCP requests.
+- **401 Unauthorized:** Send `Authorization: Bearer <MCP_AUTH_TOKEN>` matching the value in the container's environment.
+- **Container exits with "MCP_AUTH_TOKEN must be set":** Add the variable to `.env`.
 - **Invalid or missing session:** Reinitialize and reuse the returned `Mcp-Session-Id`.
 - **PRISM 401/403:** Check credentials, scope and permissions without exposing secrets.
 - **No matching records:** Check that the example name/ID has been replaced with an authorised customer.
 
 ## Security
 
-The tools are read-only, but they expose customer and subscription information. The basic server configuration does **not** itself provide public-client authentication. Keep it on a trusted network until an appropriate authentication and authorization layer is implemented. A tunnel or TLS alone does not grant authorization.
+The tools are read-only, but they expose customer and subscription information. The HTTP endpoint is protected by a shared bearer token (`MCP_AUTH_TOKEN`). Treat the token like a password, rotate it if exposed, and use TLS (for example through a tunnel) so it is not sent in clear text. A shared token is not per-user authorization.
 
 Never publish secrets, real customer identifiers, tenant domains, raw API responses, or unredacted container environment/configuration output. Review Git history as well as current files before making a repository public.
