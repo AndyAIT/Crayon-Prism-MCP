@@ -117,10 +117,34 @@ class GatingTests(unittest.TestCase):
         self.assertEqual(result["status"], "writes_disabled")
         self.client.change_subscription_quantity.assert_not_called()
 
-    def test_enabled_real_run_submits(self):
-        result = self.run_tool({"MCP_ALLOW_WRITES": "true"}, dry_run=False)
-        self.assertEqual(result["status"], "submitted")
+    def test_real_run_completes_once_prism_shows_new_quantity(self):
+        before = details(CancellationAllowedUntilDate="2999-01-01T00:00:00+00:00")
+        after = details(Quantity=25)
+        self.client.get_subscription_details.side_effect = [before, before, after]
+        env = {"MCP_ALLOW_WRITES": "true", "MCP_CONFIRM_TIMEOUT_SECONDS": "30", "MCP_CONFIRM_INTERVAL_SECONDS": "0.5"}
+        with mock.patch.object(server.time, "sleep"):
+            result = self.run_tool(env, dry_run=False)
+        self.assertEqual(result["status"], "completed")
         self.client.change_subscription_quantity.assert_called_once_with("sub-1", 25)
+
+    def test_real_run_is_pending_when_change_never_appears(self):
+        env = {"MCP_ALLOW_WRITES": "true", "MCP_CONFIRM_TIMEOUT_SECONDS": "0"}
+        result = self.run_tool(env, dry_run=False)
+        self.assertEqual(result["status"], "pending")
+        self.assertEqual(result["reference"], "ref-1")
+        self.assertIn("audit log", result["message"])
+
+    def test_schedule_confirms_against_scheduled_quantity_not_current(self):
+        self.client.set_scheduled_actions.return_value = "ref-2"
+        applied = details(
+            Quantity=20,
+            MicrosoftCSPScheduledNextTermInstructions={"ActionType": "RenewToNewTerm", "Quantity": 12},
+        )
+        self.client.get_subscription_details.side_effect = [details(), details(), applied]
+        env = {"MCP_ALLOW_WRITES": "true", "MCP_CONFIRM_TIMEOUT_SECONDS": "30"}
+        with mock.patch.dict(os.environ, env), mock.patch.object(server.time, "sleep"):
+            result = server.schedule_subscription_quantity_at_renewal("sub-1", 12, dry_run=False)
+        self.assertEqual(result["status"], "completed")
 
     def test_prism_rejection_is_reported_with_hint(self):
         response = httpx.Response(400, text="not allowed", request=httpx.Request("POST", "http://x"))

@@ -13,6 +13,25 @@ def writes_enabled() -> bool:
     return os.getenv("MCP_ALLOW_WRITES", "").strip().lower() in ("1", "true", "yes")
 
 
+def confirm_settings() -> tuple:
+    """(timeout, interval) in seconds for waiting on PRISM to apply an accepted change."""
+    def number(name, default):
+        try:
+            return max(0.0, float(os.getenv(name, default)))
+        except ValueError:
+            return float(default)
+
+    return number("MCP_CONFIRM_TIMEOUT_SECONDS", 60), max(0.5, number("MCP_CONFIRM_INTERVAL_SECONDS", 5))
+
+
+def is_applied(kind: str, details: dict, target: int) -> bool:
+    """kind is 'quantity' (seats now) or 'scheduled' (quantity at next renewal)."""
+    if kind == "scheduled":
+        scheduled = details.get("MicrosoftCSPScheduledNextTermInstructions") or {}
+        return scheduled.get("Quantity") == target
+    return details.get("Quantity") == target
+
+
 def _parse_date(value):
     if not value:
         return None

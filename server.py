@@ -6,6 +6,7 @@ from prism_client import PrismClient
 import hmac
 import os
 import sys
+import time
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
@@ -89,8 +90,22 @@ def list_microsoft_csp_subscriptions(customer_id: str) -> list[dict]:
     return subscriptions
 
 
-def _apply_change(subscription_id, planner, quantity, dry_run, send, hint=None):
-    """Plan from live read-only data; only send the write when not a dry run and writes are enabled."""
+def _await_applied(client, subscription_id, kind, quantity):
+    """PRISM answers 202 before the change is processed, so re-read until it shows or time runs out."""
+    timeout, interval = changes.confirm_settings()
+    deadline = time.monotonic() + timeout
+    while True:
+        details = client.get_subscription_details(subscription_id)
+        if changes.is_applied(kind, details, quantity):
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(interval)
+
+
+def _apply_change(subscription_id, planner, quantity, dry_run, send, hint=None, kind="quantity"):
+    """Plan from live read-only data; only send the write when not a dry run and writes are enabled.
+    A real run waits for the change to appear, so 'completed' means PRISM shows the new value."""
     client = PrismClient()
     plan = planner(client.get_subscription_details(subscription_id), quantity)
     if not plan["allowed"]:
@@ -111,7 +126,18 @@ def _apply_change(subscription_id, planner, quantity, dry_run, send, hint=None):
         reference = send(client)
     except httpx.HTTPStatusError as e:
         return changes.rejection(e, hint)
-    return {"status": "submitted", "reference": reference, **plan}
+    if _await_applied(client, subscription_id, kind, quantity):
+        return {"status": "completed", "reference": reference, **plan}
+    return {
+        "status": "pending",
+        "reference": reference,
+        "message": (
+            "PRISM accepted the request but the new value has not appeared yet. Failures are only "
+            "visible in the PRISM audit log, so do not assume it worked. Re-check with "
+            "get_subscription_change_options, and if it never applies tell the user it failed."
+        ),
+        **plan,
+    }
 
 
 @mcp.tool()
@@ -128,7 +154,8 @@ def increase_subscription_quantity(
 ) -> dict:
     """Increase seats on a Microsoft CSP subscription to new_quantity. Identify the subscription by
     SubscriptionId; if a customer has several matching subscriptions, ask the user which one.
-    Defaults to a dry run that changes nothing."""
+    Defaults to a dry run that changes nothing. A real run returns 'completed' only once PRISM
+    shows the new quantity; 'pending' means it is unconfirmed and must not be reported as done."""
     return _apply_change(
         subscription_id,
         changes.plan_increase,
@@ -143,8 +170,8 @@ def reduce_subscription_quantity(
     subscription_id: str, new_quantity: int, dry_run: bool = True
 ) -> dict:
     """Reduce seats immediately. Only possible inside the cancellation window. If the result is
-    blocked or rejected, tell the user and offer schedule_subscription_quantity_at_renewal instead.
-    Defaults to a dry run that changes nothing."""
+    blocked, rejected or still 'pending' (unconfirmed), tell the user and offer
+    schedule_subscription_quantity_at_renewal instead. Defaults to a dry run that changes nothing."""
     return _apply_change(
         subscription_id,
         changes.plan_reduce_now,
@@ -160,7 +187,8 @@ def schedule_subscription_quantity_at_renewal(
     subscription_id: str, target_quantity: int, dry_run: bool = True
 ) -> dict:
     """Set the seat count the subscription will renew with at the end of its current term. Keeps
-    the existing renewal product, term and billing cycle. Defaults to a dry run that changes nothing."""
+    the existing renewal product, term and billing cycle. Defaults to a dry run that changes nothing.
+    'completed' means PRISM shows the new scheduled quantity; 'pending' means it is unconfirmed."""
     return _apply_change(
         subscription_id,
         changes.plan_schedule,
@@ -172,7 +200,9 @@ def schedule_subscription_quantity_at_renewal(
                 c.get_subscription_details(subscription_id), target_quantity
             )["request"]["body"]["scheduledActions"],
         ),
+        kind="scheduled",
     )
+
 
 if __name__ == "__main__":
     if MCP_TRANSPORT == "stdio":

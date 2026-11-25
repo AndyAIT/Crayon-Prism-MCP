@@ -137,6 +137,7 @@ Safety:
 
 * Every change tool takes a `SubscriptionId` and defaults to `dry_run=true`, which reads live data, validates the change and returns the exact request without sending it.
 * Real changes require `dry_run=false` **and** `MCP_ALLOW_WRITES=true` on the server. Without the flag the server stays read-only.
+* PRISM replies `202` before it has processed a change, so after sending, the tool re-reads the subscription until the new quantity shows. `completed` means PRISM now shows it; `pending` means it was accepted but never appeared within `MCP_CONFIRM_TIMEOUT_SECONDS` (default 60, polled every `MCP_CONFIRM_INTERVAL_SECONDS`, default 5). Failures are only visible in the PRISM audit log, so treat `pending` as unconfirmed.
 * Offline tests: `uv run python -m unittest test_subscription_changes -v`.
 
 ## Current limitations and planned work
